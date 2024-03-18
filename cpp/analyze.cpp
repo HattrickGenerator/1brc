@@ -24,7 +24,7 @@ struct Temperature{
     int64_t acc{0};
 };
 
-constexpr size_t BUFFER_SIZE = 1024*1024;
+constexpr size_t BUFFER_SIZE = 100 *1024*1024;
 constexpr size_t MAX_LINE_SIZE = 150;
 static_assert(BUFFER_SIZE > MAX_LINE_SIZE, "Buffer has to be bigger than line length. Otherwise behavior is undefined");
 
@@ -111,7 +111,8 @@ void parseLine(std::string_view line, WeatherStations & weather_stations){
 
 
 //compile time visitor pattern for lambda
-using Buffer = std::array<char,BUFFER_SIZE + 1>;
+//using Buffer = std::array<char,BUFFER_SIZE + 1>;
+using Buffer = std::vector<char>;
 using Line = std::array<char, MAX_LINE_SIZE>;
 
 
@@ -208,7 +209,7 @@ std::array<std::pair<size_t,size_t>, num_threads> split(const Buffer& buffer, si
 
 void parseBufferWise(std::ifstream & ifile, WeatherStations & weather_stations){
 
-    Buffer buffer; //reads only the first ${bufferSize} bytes
+    Buffer buffer(BUFFER_SIZE+1); //reads only the first ${bufferSize} bytes
 
     std::vector<WeatherStations> threadStations(num_threads);
     std::vector<std::thread> threads;
