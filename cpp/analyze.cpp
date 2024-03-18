@@ -11,57 +11,74 @@
 
 #include <unordered_map>
 #include <map>
+#include <array>
 
+static_assert(UINT32_MAX > 1000000000, "UINT32 is not sufficient as a count");
+constexpr size_t max_rows = 1000000000;
+constexpr size_t max_temperature_accumulate = max_rows * 100;
+static_assert(INT64_MAX > max_temperature_accumulate, "INT64 is not sufficient for the accumulate");
 struct Temperature{
-    double min{100};
-    double max{-100};
-    double acc{0};
-    size_t cnt{0};
+    int16_t min{1000};
+    int16_t max{-1000};
+    uint32_t cnt{0};
+    int64_t acc{0};
 };
 
-int parseInt(std::string_view view){
-    int val = view[view.size() - 1];
-
-    int comma = view.size() -2;
-
-    //two digits
-    if (view.size() == 5){
-        val = -(view[1] *100 + view[2] * 10 + view[4]);
-    } //one digit negative
-    else if(view[0] == '-'){
-        val = -(view[1] *10 + view[3]);
-    }
-    else if(view.size() == 4){
-        val = (view[0] *100 + view[1] * 10 + view[3]);
-    }
-    else if(view.size() == 3){
-        val = (view[0] *10 + view[2]);
-    }
-    return val;
+static inline int16_t numFromChar(char c ){
+    return (c-'0');
 }
 
-void parseLine(const std::string& line, std::unordered_map<std::string, Temperature>& weather_stations){
-    std::string segment;
-    std::vector<std::string> segments;
-    std::stringstream test(line);
+constexpr static std::array<int16_t, 4> power10{1, 10, 100, 1000};
+static int16_t parseInt(std::string_view view){
 
-    while(std::getline(test, segment, ';'))
-    {
-        segments.push_back(segment);
+    if(view.size() == 1){
+        return numFromChar(view[0]);
     }
 
-    //int value = parseInt(segments[1]);
-    double value = std::stod(segments[1]);
+    size_t size = view.size();
+    size_t index = 0;
+    int16_t val = 0;
+    int16_t sign = 1;
+    if(view[0] == '-'){
+        sign *= -1;
+        ++index;
+    }
 
-    Temperature& tmps = weather_stations[segments[0]];
-    if(value < tmps.min){
-        tmps.min = value;
+    for(; index < size - 2; ++index){
+        val += numFromChar(view[index]) * power10[size-index - 2];
     }
-    if(value > tmps.max){
-        tmps.max = value;
+
+    return sign * (val  + numFromChar(view[size-1]));
+}
+
+void parseLine(std::string_view line, std::unordered_map<std::string, Temperature>& weather_stations){
+    std::string_view name;
+    std::string_view value_str;
+    for(size_t i = 1; i < line.size(); ++i){
+        if(line[i] == ';'){
+            name = line.substr(0, i);
+            value_str = line.substr(i+1, line.size());
+            break;
+        }
     }
-    tmps.acc += value;
-    tmps.cnt += 1;
+
+    int16_t value = parseInt(value_str);
+
+    auto it = weather_stations.find(std::string(name));
+    if(it == weather_stations.end()){
+        weather_stations.emplace(name, Temperature{value, value, 1, value});
+    }
+    else{
+        Temperature & tmps = it->second;
+        if(value < tmps.min){
+            tmps.min = value;
+        }
+        if(value > tmps.max){
+            tmps.max = value;
+        }
+        tmps.acc += value;
+        tmps.cnt += 1;
+    }
 }
 
 std::ifstream getOpenedFile(){
@@ -87,12 +104,10 @@ void print_formatted(const WeatherStations & weather_stations){
         const auto & key = it->first;
         const auto & val = it->second;
 
-
-        double cnt = val.cnt;
-        double mean = std::ceil(std::abs(val.acc * 10)/cnt);
+        double mean = std::ceil(std::abs(val.acc)/double(val.cnt));
         std::string_view sign = val.acc < 0 ? "-" : "";
 
-        std::cout << key << "=" << val.min << "/"  <<  sign << mean/10 << "/" << val.max;
+        std::cout << key << "=" << double(val.min)/10 << "/"  <<  sign << mean/10 << "/" << double( val.max)/10;
 
         if(it != --weather_stations.end()){
             std::cout << ", ";
