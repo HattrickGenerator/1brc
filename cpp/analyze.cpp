@@ -7,7 +7,7 @@
 
 #include <stdlib.h>
 #include <cmath>
-#include <sstream>
+#include <thread>
 
 #include <unordered_map>
 #include <map>
@@ -121,6 +121,7 @@ struct Positions{
     size_t line_length;
 };
 
+
 static Positions copyPartialBeginningToBuffer(const Buffer & buffer, size_t buffer_length, Line & line, size_t line_length){
 
     //Nothing to copy
@@ -142,11 +143,25 @@ static Positions copyPartialBeginningToBuffer(const Buffer & buffer, size_t buff
     return {i + 1,line_length};
 }
 
-static void parseBuffer(const Buffer & buffer, size_t len, WeatherStations& weather_stations){
+static void parseBuffer(const std::reference_wrapper<Buffer> buffer, size_t begin, size_t len, std::reference_wrapper<WeatherStations> weather_stations){
+    std::string_view buffer_string(buffer.get().data(), len);
+
+    size_t buffer_offset = begin;
+    for(size_t i = begin; i < len; ++i){
+        if(buffer_string[i] == '\n'){
+            parseLine(buffer_string.substr(buffer_offset, i - buffer_offset), weather_stations.get());
+            buffer_offset = i + 1;
+        }
+    }
+}
+
+
+//Returns first and last that are aligned
+static std::pair<size_t,size_t> getAlignedBufferIndices(const Buffer & buffer, size_t len, WeatherStations& weather_stations){
 
     static Line line{'\0'}; // This buffer is only used if chunks are not aligned with line breaks
     static size_t line_length = 0;
-    std::string_view buffer_string(buffer.data(), BUFFER_SIZE);
+    std::string_view buffer_string(buffer.data(), len);
 
     //Buffer is so big that this only happens once in the beginning.
     auto positions = copyPartialBeginningToBuffer(buffer, len, line, line_length);
@@ -156,25 +171,47 @@ static void parseBuffer(const Buffer & buffer, size_t len, WeatherStations& weat
         line[0] = '\0';
     }
 
-    size_t i = positions.buffer_index;
-    size_t buffer_offset = i;
-    for(; i < len; ++i){
-        if(buffer_string[i] == '\n'){
-            parseLine(buffer_string.substr(buffer_offset, i - buffer_offset), weather_stations);
-            buffer_offset = i + 1;
-        }
+    size_t last = buffer_string.find_last_of('\n');
+    if(last != buffer_string.length() - 1){
+        //copy the end into the buffer
+        std::copy(buffer.begin() + last + 1, buffer.end(), line.begin());
+        line_length += std::distance(buffer.begin() + last + 1, buffer.end()) - 1;
+        
     }
 
-    if(buffer_offset != i){
-        //copy the end into the buffer
-        std::copy(buffer.begin() + buffer_offset, buffer.end(), line.begin());
-        line_length += std::distance(buffer.begin() + buffer_offset, buffer.end()) - 1;
+    if(last != std::string::npos){
+        return {positions.buffer_index, last + 1};
+    }
+    else{
+        return {positions.buffer_index, len};
     }
 }
+
+constexpr size_t num_threads = 8;
+std::array<std::pair<size_t,size_t>, num_threads> split(const Buffer& buffer, size_t begin, size_t end){
+    std::string_view buffer_string(buffer.data(), end);
+
+    std::array<std::pair<size_t,size_t>, num_threads> delimiter_array;
+
+    size_t chunk_size = (end - begin)/num_threads;
+    size_t delimiter = begin;
+    for(int i = 0; i < num_threads - 1; ++i){
+        size_t new_delimiter = buffer_string.substr(delimiter, chunk_size).find_last_of('\n');
+        delimiter_array[i] = {delimiter, delimiter + new_delimiter + 1};
+        delimiter += new_delimiter + 1;
+    }
+    delimiter_array[num_threads - 1] = {delimiter, end};
+
+    return delimiter_array;
+}
+
 
 void parseBufferWise(std::ifstream & ifile, WeatherStations & weather_stations){
 
     Buffer buffer; //reads only the first ${bufferSize} bytes
+
+    std::vector<WeatherStations> threadStations(num_threads);
+    std::vector<std::thread> threads;
 
     while(1)
     {
@@ -187,9 +224,32 @@ void parseBufferWise(std::ifstream & ifile, WeatherStations & weather_stations){
             len = getTrimmedBufferLen(len, buffer);
         }
 
-        parseBuffer(buffer, len, weather_stations);
+        auto [begin, endOfBuff] = getAlignedBufferIndices(buffer, len, weather_stations);
+        std::array<std::pair<size_t,size_t>, num_threads> split_arr = split(buffer, begin, endOfBuff);
 
-        if(!ifile) break;
+        for(int i = 0; i< num_threads; ++i){
+            auto [begin_split, end_split] = split_arr[i];
+            threads.emplace_back(parseBuffer, std::ref(buffer), begin_split, end_split, std::ref(threadStations[i]));
+        }
+
+        for (auto& thread : threads) {
+            thread.join();
+        }
+        threads.clear();
+
+        if(!ifile) {
+            //merge weather_stations
+            for(auto & station : threadStations){
+                for(const auto & [key, val]: station){
+                    Temperature& tmps = weather_stations[key];
+                    tmps.max = std::max(tmps.max, val.max);
+                    tmps.min = std::min(tmps.min, val.min);
+                    tmps.acc += val.acc;
+                    tmps.cnt += val.cnt;
+                }
+            }
+            break;
+        };
     }
     ifile.close();
 }
