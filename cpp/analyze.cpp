@@ -1,11 +1,15 @@
 #include <string>
 #include <vector>
 #include <fstream>
+
 #include <iostream>
 #include <iomanip>
+
 #include <stdlib.h>
 #include <cmath>
 #include <sstream>
+
+#include <unordered_map>
 #include <map>
 
 struct Temperature{
@@ -15,7 +19,28 @@ struct Temperature{
     size_t cnt{0};
 };
 
-void parseLine(const std::string& line, std::map<std::string, Temperature>& weather_stations){
+int parseInt(std::string_view view){
+    int val = view[view.size() - 1];
+
+    int comma = view.size() -2;
+
+    //two digits
+    if (view.size() == 5){
+        val = -(view[1] *100 + view[2] * 10 + view[4]);
+    } //one digit negative
+    else if(view[0] == '-'){
+        val = -(view[1] *10 + view[3]);
+    }
+    else if(view.size() == 4){
+        val = (view[0] *100 + view[1] * 10 + view[3]);
+    }
+    else if(view.size() == 3){
+        val = (view[0] *10 + view[2]);
+    }
+    return val;
+}
+
+void parseLine(const std::string& line, std::unordered_map<std::string, Temperature>& weather_stations){
     std::string segment;
     std::vector<std::string> segments;
     std::stringstream test(line);
@@ -25,7 +50,8 @@ void parseLine(const std::string& line, std::map<std::string, Temperature>& weat
         segments.push_back(segment);
     }
 
-    double value = strtod(segments[1].c_str(), NULL);
+    //int value = parseInt(segments[1]);
+    double value = std::stod(segments[1]);
 
     Temperature& tmps = weather_stations[segments[0]];
     if(value < tmps.min){
@@ -78,7 +104,7 @@ void print_formatted(const WeatherStations & weather_stations){
 
 int main(){
 
-    std::map<std::string, Temperature> weather_stations;
+    std::unordered_map<std::string, Temperature> weather_stations;
     std::ifstream myfile = getOpenedFile();
 
     std::string line;
@@ -86,6 +112,10 @@ int main(){
         parseLine(line, weather_stations);
     }
 
+    std::map<std::string, Temperature> weather_stations_sorted;
+    for(auto & [key, val] : weather_stations){
+        weather_stations_sorted.emplace(key, val);
+    }
 
-    print_formatted(weather_stations);
+    print_formatted(weather_stations_sorted);
 }
